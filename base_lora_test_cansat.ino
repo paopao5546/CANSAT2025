@@ -1,27 +1,21 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <WiFi.h>
-
 // ============ WiFi Config ================
-const char* ssid = "REPLACE_WITH_YOUR_SSID";
-const char* password = "REPLACE_WITH_YOUR_PASSWORD";
+const char* ssid = "Chanathip's S24 Ultra";
+const char* password = "wcyg2779";
 WiFiServer server(80);
-
 // ============ LoRa Config ================
 #define ss 5
 #define rst 14
 #define dio0 2
-
 String LoRaData = "";    // เก็บค่าล่าสุดที่รับจาก LoRa
 String header = "";
-
 unsigned long currentTime = millis();
 unsigned long previousTime = 0;
 const long timeoutTime = 2000;
-
 void setup() {
   Serial.begin(115200);
-
   // --- LoRa Init ---
   LoRa.setPins(ss, rst, dio0);
   while (!LoRa.begin(915E6)) {
@@ -30,7 +24,6 @@ void setup() {
   }
   LoRa.setSyncWord(0xF3);
   Serial.println("LoRa Initializing OK!");
-
   // --- WiFi Init ---
   Serial.print("Connecting to WiFi ");
   Serial.println(ssid);
@@ -40,10 +33,8 @@ void setup() {
   }
   Serial.println("\nWiFi connected. IP address: ");
   Serial.println(WiFi.localIP());
-
   server.begin();
 }
-
 void loop() {
   // ==== LoRa Receive ====
   int packetSize = LoRa.parsePacket();
@@ -55,7 +46,6 @@ void loop() {
     LoRaData = received;
     Serial.println("Received: " + LoRaData);
   }
-
   // ==== Handle Web Client ====
   WiFiClient client = server.available();
   if (client) {
@@ -63,13 +53,11 @@ void loop() {
     previousTime = currentTime;
     Serial.println("New Client Connected.");
     String currentLine = "";
-
     while (client.connected() && currentTime - previousTime <= timeoutTime) {
       currentTime = millis();
       if (client.available()) {
         char c = client.read();
         header += c;
-
         if (c == '\n') {
           if (currentLine.length() == 0) {
             // ==== Send HTML ====
@@ -77,7 +65,6 @@ void loop() {
             client.println("Content-type:text/html");
             client.println("Connection: close");
             client.println();
-
             client.println("<!DOCTYPE html><html>");
             client.println("<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
             client.println("<style>body { font-family: Arial; text-align: center; margin-top: 50px; }");
@@ -87,7 +74,6 @@ void loop() {
             client.println("<div class='data-box'>Last Received:<br><strong>" + LoRaData + "</strong></div>");
             client.println("<p><i>(Refresh page for updates)</i></p>");
             client.println("</body></html>");
-
             client.println();
             break;
           } else {
