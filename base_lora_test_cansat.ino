@@ -1,21 +1,26 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <WiFi.h>
+
 // ============ WiFi Config ================
 const char* ssid = "Chanathip's S24 Ultra";
 const char* password = "wcyg2779";
 WiFiServer server(80);
+
 // ============ LoRa Config ================
 #define ss 5
 #define rst 14
 #define dio0 2
+
 String LoRaData = "";    // เก็บค่าล่าสุดที่รับจาก LoRa
 String header = "";
 unsigned long currentTime = millis();
 unsigned long previousTime = 0;
 const long timeoutTime = 2000;
+
 void setup() {
   Serial.begin(115200);
+
   // --- LoRa Init ---
   LoRa.setPins(ss, rst, dio0);
   while (!LoRa.begin(915E6)) {
@@ -24,6 +29,7 @@ void setup() {
   }
   LoRa.setSyncWord(0xF3);
   Serial.println("LoRa Initializing OK!");
+
   // --- WiFi Init ---
   Serial.print("Connecting to WiFi ");
   Serial.println(ssid);
@@ -35,6 +41,7 @@ void setup() {
   Serial.println(WiFi.localIP());
   server.begin();
 }
+
 void loop() {
   // ==== LoRa Receive ====
   int packetSize = LoRa.parsePacket();
@@ -46,6 +53,7 @@ void loop() {
     LoRaData = received;
     Serial.println("Received: " + LoRaData);
   }
+
   // ==== Handle Web Client ====
   WiFiClient client = server.available();
   if (client) {
@@ -67,12 +75,17 @@ void loop() {
             client.println();
             client.println("<!DOCTYPE html><html>");
             client.println("<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
+            client.println("<title>LoRa Receiver Web</title>");
             client.println("<style>body { font-family: Arial; text-align: center; margin-top: 50px; }");
             client.println("h1 { color: #333; } .data-box { font-size: 24px; background: #eee; display: inline-block; padding: 20px; border-radius: 10px; }</style>");
-            client.println("<title>LoRa Receiver Web</title></head>");
+            
+            // 🔁 JavaScript Auto Refresh
+            client.println("<script>setTimeout(() => { location.reload(); }, 3000);</script>");
+            
+            client.println("</head>");
             client.println("<body><h1>LoRa Data Receiver</h1>");
             client.println("<div class='data-box'>Last Received:<br><strong>" + LoRaData + "</strong></div>");
-            client.println("<p><i>(Refresh page for updates)</i></p>");
+            client.println("<p><i>(Auto-refresh every 3 seconds)</i></p>");
             client.println("</body></html>");
             client.println();
             break;
