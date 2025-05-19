@@ -35,7 +35,8 @@ void setup() {
   Serial.println(ssid);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500); Serial.print(".");
+    delay(500);
+    Serial.print(".");
   }
   Serial.println("\nWiFi connected. IP address: ");
   Serial.println(WiFi.localIP());
@@ -61,33 +62,46 @@ void loop() {
     previousTime = currentTime;
     Serial.println("New Client Connected.");
     String currentLine = "";
+
     while (client.connected() && currentTime - previousTime <= timeoutTime) {
       currentTime = millis();
+
       if (client.available()) {
         char c = client.read();
         header += c;
+
         if (c == '\n') {
           if (currentLine.length() == 0) {
-            // ==== Send HTML ====
-            client.println("HTTP/1.1 200 OK");
-            client.println("Content-type:text/html");
-            client.println("Connection: close");
-            client.println();
-            client.println("<!DOCTYPE html><html>");
-            client.println("<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
-            client.println("<title>LoRa Receiver Web</title>");
-            client.println("<style>body { font-family: Arial; text-align: center; margin-top: 50px; }");
-            client.println("h1 { color: #333; } .data-box { font-size: 24px; background: #eee; display: inline-block; padding: 20px; border-radius: 10px; }</style>");
-            
-            // 🔁 JavaScript Auto Refresh
-            client.println("<script>setTimeout(() => { location.reload(); }, 3000);</script>");
-            
-            client.println("</head>");
-            client.println("<body><h1>LoRa Data Receiver</h1>");
-            client.println("<div class='data-box'>Last Received:<br><strong>" + LoRaData + "</strong></div>");
-            client.println("<p><i>(Auto-refresh every 3 seconds)</i></p>");
-            client.println("</body></html>");
-            client.println();
+            // ==== ส่งข้อมูลแบบเรียลไทม์ด้วย AJAX ====
+            if (header.indexOf("GET /data") >= 0) {
+              client.println("HTTP/1.1 200 OK");
+              client.println("Content-Type: text/plain");
+              client.println("Connection: close");
+              client.println();
+              client.println(LoRaData);
+            } else {
+              // ==== HTML หลัก ====
+              client.println("HTTP/1.1 200 OK");
+              client.println("Content-type:text/html");
+              client.println("Connection: close");
+              client.println();
+              client.println("<!DOCTYPE html><html>");
+              client.println("<head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'>");
+              client.println("<title>LoRa Receiver Web</title>");
+              client.println("<style>body { font-family: Arial; text-align: center; margin-top: 50px; }");
+              client.println("h1 { color: #333; } .data-box { font-size: 24px; background: #eee; display: inline-block; padding: 20px; border-radius: 10px; }</style>");
+              // === JavaScript AJAX ===
+              client.println("<script>");
+              client.println("setInterval(() => {");
+              client.println("  fetch('/data').then(r => r.text()).then(t => { document.getElementById('data').innerHTML = t; });");
+              client.println("}, 1000);");
+              client.println("</script>");
+              client.println("</head>");
+              client.println("<body><h1>LoRa Data Receiver</h1>");
+              client.println("<div class='data-box'>Last Received:<br><strong id='data'>Loading...</strong></div>");
+              client.println("</body></html>");
+              client.println();
+            }
             break;
           } else {
             currentLine = "";
