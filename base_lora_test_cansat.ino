@@ -23,7 +23,7 @@ void setup() {
 
   // --- LoRa Init ---
   LoRa.setPins(ss, rst, dio0);
-  while (!LoRa.begin(915E6)) {
+  while (!LoRa.begin(922.525E6)) {
     Serial.println("LoRa init failed. Trying again...");
     delay(500);
   }
