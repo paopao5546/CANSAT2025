@@ -1,0 +1,534 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <MPU6050_light.h>
+#include <Wire.h>
+#include <Adafruit_BMP280.h>
+#include <ArduinoJson.h>
+
+// WiFi config
+const char* ssid = "Chanathip's S24 Ultra";
+const char* password = "wcyg2779";
+
+WebServer server(80);
+
+MPU6050 mpu(Wire);
+Adafruit_BMP280 bmp;
+
+float gravityX = 0, gravityY = 0, gravityZ = 0;
+float pressure0 = 1013.25;
+float altitude0 = 0; // Reference altitude for relative measurement
+
+// Variables for timing
+unsigned long lastSerialOutput = 0;
+const unsigned long serialInterval = 1000; // Print to serial every 1 second
+
+// Conversion constant: 1g = 9.80665 m/s²
+const float G_TO_MS2 = 9.80665;
+
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MPU6050 + BMP280 Real-time Monitor</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { 
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+      text-align: center; 
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      margin: 0;
+      padding: 20px;
+      color: white;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 20px;
+      padding: 20px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+    }
+    h1 { 
+      color: white; 
+      margin-bottom: 30px;
+      font-size: 2.5em;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    }
+    .sensor-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      margin-bottom: 30px;
+    }
+    .sensor-card {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 15px;
+      padding: 20px;
+      backdrop-filter: blur(5px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+    .sensor-card.highlight {
+      border: 2px solid #FFD700;
+      box-shadow: 0 0 20px rgba(255, 215, 0, 0.3);
+    }
+    .sensor-title {
+      font-size: 1.2em;
+      font-weight: bold;
+      margin-bottom: 15px;
+      color: #FFD700;
+    }
+    .value { 
+      font-size: 1.1em; 
+      margin: 8px 0;
+      padding: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+    }
+    .big-value {
+      font-size: 1.8em;
+      font-weight: bold;
+      color: #FFD700;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+    }
+    .chart-container {
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 15px;
+      padding: 20px;
+      margin-top: 20px;
+    }
+    .status {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 10px 20px;
+      border-radius: 20px;
+      background: rgba(0, 255, 0, 0.8);
+      color: white;
+      font-weight: bold;
+      z-index: 1000;
+    }
+    .last-update {
+      font-size: 0.9em;
+      color: #FFD700;
+      margin-top: 10px;
+    }
+    .calibration-btn {
+      background: linear-gradient(45deg, #FF6B6B, #FF8E53);
+      border: none;
+      color: white;
+      padding: 10px 20px;
+      border-radius: 25px;
+      font-weight: bold;
+      cursor: pointer;
+      margin: 10px;
+      transition: all 0.3s ease;
+    }
+    .calibration-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    }
+    .motion-indicator {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-left: 10px;
+      background: #4CAF50;
+      animation: pulse 1s infinite;
+    }
+    .motion-indicator.moving {
+      background: #FF5722;
+      animation: pulse 0.5s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.5; }
+      100% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="status" id="status">🟢 Connecting...</div>
+  
+  <div class="container">
+    <h1>🚀 Advanced Sensor Monitor</h1>
+    
+    <div style="margin-bottom: 20px;">
+      <button class="calibration-btn" onclick="calibrateAltitude()">📍 Calibrate Altitude Here</button>
+      <span id="motionStatus">🟢 Stationary</span>
+      <div class="motion-indicator" id="motionIndicator"></div>
+    </div>
+    
+    <div class="sensor-grid">
+      <div class="sensor-card highlight">
+        <div class="sensor-title">🏃‍♂️ Linear Acceleration (m/s²)</div>
+        <div class="value" id="accX">X: --</div>
+        <div class="value" id="accY">Y: --</div>
+        <div class="value" id="accZ">Z: --</div>
+        <div class="value">Total: <span class="big-value" id="accTotal">--</span></div>
+      </div>
+      
+      <div class="sensor-card">
+        <div class="sensor-title">🔄 Rotation (°)</div>
+        <div class="value" id="rotX">X: --</div>
+        <div class="value" id="rotY">Y: --</div>
+        <div class="value" id="rotZ">Z: --</div>
+      </div>
+      
+      <div class="sensor-card highlight">
+        <div class="sensor-title">⛰️ Altitude Monitor</div>
+        <div class="value">Absolute: <span id="absAlt">--</span> m</div>
+        <div class="value">Relative: <span class="big-value" id="relAlt">--</span> m</div>
+        <div class="value" id="altStatus">📍 Reference Set</div>
+      </div>
+      
+      <div class="sensor-card">
+        <div class="sensor-title">🌡️ Environment</div>
+        <div class="value" id="temp">Temperature: --</div>
+        <div class="value" id="pres">Pressure: --</div>
+        <div class="value" id="presChange">Change: --</div>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <h3 style="margin-top: 0; color: #FFD700;">📊 Real-time Data Stream</h3>
+      <div id="dataDisplay" style="font-family: monospace; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 10px; text-align: left; white-space: pre-line; font-size: 0.9em; max-height: 300px; overflow-y: auto;"></div>
+      <div class="last-update" id="lastUpdate">Last Update: --</div>
+    </div>
+  </div>
+
+<script>
+let isConnected = false;
+let dataHistory = [];
+let referenceAltitude = 0;
+let referencePressure = 0;
+
+function updateStatus(connected) {
+  const status = document.getElementById('status');
+  if (connected) {
+    status.innerHTML = '🟢 Connected';
+    status.style.background = 'rgba(0, 255, 0, 0.8)';
+  } else {
+    status.innerHTML = '🔴 Disconnected';
+    status.style.background = 'rgba(255, 0, 0, 0.8)';
+  }
+  isConnected = connected;
+}
+
+function calibrateAltitude() {
+  fetch('/calibrate')
+    .then(res => res.json())
+    .then(json => {
+      if (json.success) {
+        document.getElementById("altStatus").innerHTML = `📍 Calibrated at ${json.altitude.toFixed(2)}m`;
+        referenceAltitude = json.altitude;
+        referencePressure = json.pressure;
+      }
+    })
+    .catch(error => {
+      console.error('Calibration failed:', error);
+    });
+}
+
+function fetchData() {
+  fetch('/data')
+    .then(res => {
+      if (!res.ok) throw new Error('Network response was not ok');
+      return res.json();
+    })
+    .then(json => {
+      // Update acceleration values (in m/s²)
+      document.getElementById("accX").innerHTML = `X: ${json.accX.toFixed(2)} m/s²`;
+      document.getElementById("accY").innerHTML = `Y: ${json.accY.toFixed(2)} m/s²`;
+      document.getElementById("accZ").innerHTML = `Z: ${json.accZ.toFixed(2)} m/s²`;
+      document.getElementById("accTotal").innerHTML = `${json.accTotal.toFixed(2)} m/s²`;
+      
+      // Update rotation values
+      document.getElementById("rotX").innerHTML = `X: ${json.angleX.toFixed(1)}°`;
+      document.getElementById("rotY").innerHTML = `Y: ${json.angleY.toFixed(1)}°`;
+      document.getElementById("rotZ").innerHTML = `Z: ${json.angleZ.toFixed(1)}°`;
+      
+      // Update altitude values
+      document.getElementById("absAlt").innerHTML = json.absAlt.toFixed(2);
+      document.getElementById("relAlt").innerHTML = json.relAlt.toFixed(2);
+      
+      // Color code relative altitude
+      const relAltElement = document.getElementById("relAlt");
+      if (json.relAlt > 0.5) {
+        relAltElement.style.color = '#4CAF50'; // Green for up
+      } else if (json.relAlt < -0.5) {
+        relAltElement.style.color = '#FF5722'; // Red for down
+      } else {
+        relAltElement.style.color = '#FFD700'; // Gold for stable
+      }
+      
+      // Update environment values
+      document.getElementById("temp").innerHTML = `🌡️ ${json.temp.toFixed(2)} °C`;
+      document.getElementById("pres").innerHTML = `🔽 ${json.pres.toFixed(2)} hPa`;
+      document.getElementById("presChange").innerHTML = `Δ ${json.presChange.toFixed(2)} hPa`;
+      
+      // Motion detection
+      const isMoving = json.accTotal > 1.0; // threshold 1 m/s²
+      const motionIndicator = document.getElementById("motionIndicator");
+      const motionStatus = document.getElementById("motionStatus");
+      
+      if (isMoving) {
+        motionIndicator.classList.add("moving");
+        motionStatus.innerHTML = "🔴 Moving";
+      } else {
+        motionIndicator.classList.remove("moving");
+        motionStatus.innerHTML = "🟢 Stationary";
+      }
+      
+      // Add to history
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString();
+      dataHistory.unshift(`${timeStr} | Acc: ${json.accTotal.toFixed(2)} m/s² | Alt: ${json.relAlt.toFixed(2)}m | Temp: ${json.temp.toFixed(1)}°C`);
+      
+      // Keep only last 15 entries
+      if (dataHistory.length > 15) {
+        dataHistory = dataHistory.slice(0, 15);
+      }
+      
+      // Update data display
+      document.getElementById("dataDisplay").innerHTML = dataHistory.join('\n');
+      
+      // Update last update time
+      document.getElementById("lastUpdate").innerHTML = `Last Update: ${now.toLocaleString()}`;
+      
+      updateStatus(true);
+    })
+    .catch(error => {
+      console.error('Error fetching data:', error);
+      updateStatus(false);
+    });
+}
+
+// Fetch data every 500ms
+setInterval(fetchData, 500);
+
+// Initial fetch
+fetchData();
+</script>
+</body>
+</html>
+)rawliteral";
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("\n=== Advanced MPU6050 + BMP280 Monitor ===");
+  
+  // Connect to WiFi
+  Serial.print("Connecting to WiFi");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.println("WiFi Connected!");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+  Serial.print("Access the web interface at: http://");
+  Serial.println(WiFi.localIP());
+  Serial.println("==========================================\n");
+
+  // Initialize I2C
+  Wire.begin();
+  delay(100);
+  
+  // Initialize MPU6050
+  Serial.print("Initializing MPU6050... ");
+  mpu.begin();
+  Serial.println("OK");
+  
+  Serial.println("Please keep the sensor STILL for calibration...");
+  delay(3000);
+  
+  Serial.print("Calibrating MPU6050 offsets... ");
+  mpu.calcOffsets(true, true);
+  
+  // Take several readings to get stable gravity reference
+  float sumX = 0, sumY = 0, sumZ = 0;
+  int samples = 100;
+  
+  for(int i = 0; i < samples; i++) {
+    mpu.update();
+    sumX += mpu.getAccX();
+    sumY += mpu.getAccY();
+    sumZ += mpu.getAccZ();
+    delay(10);
+  }
+  
+  gravityX = sumX / samples;
+  gravityY = sumY / samples;
+  gravityZ = sumZ / samples;
+  
+  Serial.println("Done");
+  Serial.printf("Gravity offsets - X: %.4f, Y: %.4f, Z: %.4f g\n", gravityX, gravityY, gravityZ);
+
+  // Initialize BMP280
+  Serial.print("Initializing BMP280... ");
+  if (!bmp.begin(0x76)) {
+    Serial.println("FAILED!");
+    Serial.println("Could not find BMP280 sensor, check wiring!");
+    while (1) {
+      delay(1000);
+      Serial.println("BMP280 initialization failed - system halted");
+    }
+  }
+  Serial.println("OK");
+  
+  // Set reference pressure and altitude
+  pressure0 = bmp.readPressure() / 100.0;
+  altitude0 = 44330.0 * (1.0 - pow(pressure0 / 1013.25, 0.1903));
+  
+  Serial.printf("Reference pressure: %.2f hPa\n", pressure0);
+  Serial.printf("Reference altitude: %.2f m\n", altitude0);
+  Serial.println("==========================================");
+
+  // Setup web server routes
+  server.on("/", []() {
+    server.send_P(200, "text/html", index_html);
+  });
+
+  server.on("/calibrate", []() {
+    // Recalibrate altitude reference
+    pressure0 = bmp.readPressure() / 100.0;
+    altitude0 = 44330.0 * (1.0 - pow(pressure0 / 1013.25, 0.1903));
+    
+    StaticJsonDocument<128> doc;
+    doc["success"] = true;
+    doc["pressure"] = pressure0;
+    doc["altitude"] = altitude0;
+    
+    String json;
+    serializeJson(doc, json);
+    server.send(200, "application/json", json);
+    
+    Serial.printf("Altitude calibrated! New reference: %.2f m (%.2f hPa)\n", altitude0, pressure0);
+  });
+
+  server.on("/data", []() {
+    mpu.update();
+
+    // Get raw acceleration values
+    float rawAccX = mpu.getAccX();
+    float rawAccY = mpu.getAccY();
+    float rawAccZ = mpu.getAccZ();
+
+    // Calculate linear acceleration (subtract gravity components)
+    float linAccX_g = rawAccX - gravityX;
+    float linAccY_g = rawAccY - gravityY;
+    float linAccZ_g = rawAccZ - gravityZ;
+
+    // Apply threshold to eliminate noise when stationary
+    const float threshold = 0.02; // 0.02g threshold
+    if (abs(linAccX_g) < threshold) linAccX_g = 0;
+    if (abs(linAccY_g) < threshold) linAccY_g = 0;
+    if (abs(linAccZ_g) < threshold) linAccZ_g = 0;
+
+    // Convert from g to m/s²
+    float linAccX_ms2 = linAccX_g * G_TO_MS2;
+    float linAccY_ms2 = linAccY_g * G_TO_MS2;
+    float linAccZ_ms2 = linAccZ_g * G_TO_MS2;
+    
+    // Calculate total acceleration magnitude
+    float totalAcc = sqrt(linAccX_ms2*linAccX_ms2 + linAccY_ms2*linAccY_ms2 + linAccZ_ms2*linAccZ_ms2);
+
+    // Read environmental data
+    float currentPressure = bmp.readPressure() / 100.0;
+    float temperature = bmp.readTemperature();
+    
+    // Calculate absolute altitude
+    float absoluteAltitude = 44330.0 * (1.0 - pow(currentPressure / 1013.25, 0.1903));
+    
+    // Calculate relative altitude (difference from reference)
+    float relativeAltitude = absoluteAltitude - altitude0;
+    
+    // Calculate pressure change from reference
+    float pressureChange = currentPressure - pressure0;
+
+    // Create JSON response
+    StaticJsonDocument<512> doc;
+    doc["accX"] = linAccX_ms2;
+    doc["accY"] = linAccY_ms2;
+    doc["accZ"] = linAccZ_ms2;
+    doc["accTotal"] = totalAcc;
+    doc["angleX"] = mpu.getAngleX();
+    doc["angleY"] = mpu.getAngleY();
+    doc["angleZ"] = mpu.getAngleZ();
+    doc["temp"] = temperature;
+    doc["pres"] = currentPressure;
+    doc["presChange"] = pressureChange;
+    doc["absAlt"] = absoluteAltitude;
+    doc["relAlt"] = relativeAltitude;
+
+    String json;
+    serializeJson(doc, json);
+    server.send(200, "application/json", json);
+  });
+
+  server.begin();
+  Serial.println("Web server started!");
+  Serial.println("Ready to serve data...\n");
+  Serial.println("Data Format:");
+  Serial.println("[TIME] Acc: X Y Z m/s² (Total) | Alt: ±X.XX m | Temp: XX.X°C | Pres: XXXX.XX hPa");
+  Serial.println("=============================================================================");
+}
+
+void loop() {
+  server.handleClient();
+  
+  // Print sensor data to Serial Monitor with timestamp every second
+  unsigned long currentTime = millis();
+  if (currentTime - lastSerialOutput >= serialInterval) {
+    lastSerialOutput = currentTime;
+    
+    mpu.update();
+    
+    // Get raw acceleration
+    float rawAccX = mpu.getAccX();
+    float rawAccY = mpu.getAccY();
+    float rawAccZ = mpu.getAccZ();
+    
+    // Calculate linear acceleration
+    float linAccX_g = rawAccX - gravityX;
+    float linAccY_g = rawAccY - gravityY;
+    float linAccZ_g = rawAccZ - gravityZ;
+    
+    // Apply threshold
+    const float threshold = 0.02;
+    if (abs(linAccX_g) < threshold) linAccX_g = 0;
+    if (abs(linAccY_g) < threshold) linAccY_g = 0;
+    if (abs(linAccZ_g) < threshold) linAccZ_g = 0;
+    
+    // Convert to m/s²
+    float linAccX_ms2 = linAccX_g * G_TO_MS2;
+    float linAccY_ms2 = linAccY_g * G_TO_MS2;
+    float linAccZ_ms2 = linAccZ_g * G_TO_MS2;
+    float totalAcc = sqrt(linAccX_ms2*linAccX_ms2 + linAccY_ms2*linAccY_ms2 + linAccZ_ms2*linAccZ_ms2);
+    
+    // Environmental data
+    float currentPressure = bmp.readPressure() / 100.0;
+    float temperature = bmp.readTemperature();
+    float absoluteAltitude = 44330.0 * (1.0 - pow(currentPressure / 1013.25, 0.1903));
+    float relativeAltitude = absoluteAltitude - altitude0;
+
+    // Create timestamp (time since boot)
+    unsigned long totalSeconds = currentTime / 1000;
+    int hours = totalSeconds / 3600;
+    int minutes = (totalSeconds % 3600) / 60;
+    int seconds = totalSeconds % 60;
+
+    // Print formatted data with timestamp
+    Serial.printf("[%02d:%02d:%02d] ", hours, minutes, seconds);
+    Serial.printf("Acc: %.2f %.2f %.2f m/s² (%.2f) | ", 
+                  linAccX_ms2, linAccY_ms2, linAccZ_ms2, totalAcc);
+    Serial.printf("Alt: %+.2f m | ", relativeAltitude);
+    Serial.printf("Temp: %.1f°C | Pres: %.2f hPa", temperature, currentPressure);
+    Serial.println();
+  }
+}
