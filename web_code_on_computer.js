@@ -1,3 +1,7 @@
+// รันบน vs code ด้วย Node. โดยต้องติดตั้ง Node.js ก่อน
+// ใช้คําสั่ง npm start บน terminal ของ vs code
+
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Play, Square, Wifi, WifiOff, Settings, Map, Satellite, Activity, Thermometer, Navigation, MapPin, Signal, Search, RefreshCw, Crosshair, Move } from 'lucide-react';
 
